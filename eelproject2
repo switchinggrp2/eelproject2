@@ -1,0 +1,1548 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
+import io
+from sklearn.linear_model import LinearRegression
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+import calendar
+import hashlib
+import warnings
+import json
+warnings.filterwarnings('ignore')
+
+# Set page config
+st.set_page_config(
+    page_title="Car Maintenance Analysis & Predictor",
+    page_icon="🚗",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+st.markdown(
+    """
+    <h1 style='text-align: center; color: #0072B5; font-weight: bold;'>
+        🚗 Car Maintenance Analysis & Predictor 🚗
+    </h1>
+    """,
+    unsafe_allow_html=True
+)
+
+# Custom CSS for better styling
+st.markdown("""
+    <style>
+    .main {
+        background-color: #f5f5f5;
+    }
+    .stButton>button {
+        background-color: #4CAF50;
+        color: white;
+        border-radius: 5px;
+        padding: 0.5rem 1rem;
+    }
+    .stSelectbox, .stTextInput, .stNumberInput, .stDateInput {
+        margin-bottom: 1rem;
+    }
+    .sidebar .sidebar-content {
+        background-color: #e8f5e9;
+    }
+    .metric-card {
+        background-color: white;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 15px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .header {
+        color: #2E7D32;
+    }
+    .login-container {
+        max-width: 400px;
+        margin: 0 auto;
+        padding: 2rem;
+        background: white;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .login-title {
+        text-align: center;
+        margin-bottom: 1.5rem;
+        color: #2E7D32;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# Check if the session state keys are initialized
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+if "username" not in st.session_state:
+    st.session_state["username"] = None
+if "user_info" not in st.session_state:
+    st.session_state["user_info"] = None
+
+# Login page function
+# --- Login system setup ---
+
+# Define password hashing
+def make_hashes(password):
+    return hashlib.sha256(str.encode(password)).hexdigest()
+
+def check_hashes(password, hashed_text):
+    return make_hashes(password) == hashed_text
+
+# User database
+users_db = {
+    "admin": {
+        "password": make_hashes("admin123"),
+        "name": "Administrator",
+        "email": "admin@example.com"
+    },
+    "user1": {
+        "password": make_hashes("password1"),
+        "name": "John Doe",
+        "email": "john@example.com"
+    }
+}
+
+# Login page function
+def login_page():
+    st.markdown("<div class='login-container'><h1 class='login-title'>🚗 Car Maintenance Login</h1>", unsafe_allow_html=True)
+    
+    login_form = st.form(key='login_form')
+    username = login_form.text_input("Username")
+    password = login_form.text_input("Password", type="password")
+    submit_button = login_form.form_submit_button(label='Login')
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if submit_button:
+        if username in users_db and check_hashes(password, users_db[username]["password"]):
+            st.session_state["authenticated"] = True
+            st.session_state["username"] = username
+            st.session_state["user_info"] = users_db[username]
+            st.experimental_rerun()
+        else:
+            st.error("Invalid username or password")
+
+# If not logged in, show login and stop app
+if not st.session_state["authenticated"]:
+    login_page()
+    st.stop()
+
+# Once logged in, main app continues
+st.title("Welcome to the Car Maintenance Analysis App")
+
+# Initialize session state for data storage
+if 'vehicles' not in st.session_state:
+    st.session_state.vehicles = pd.DataFrame(columns=[
+        'VehicleID', 'Make', 'Model', 'Year', 'CurrentMileage', 'VehicleType',
+        'PurchaseDate', 'LastServiceDate', 'NextServiceDue', 'BatteryHealth', 
+        'EVRange', 'FuelType', 'InsuranceProvider', 'PolicyNumber'
+    ])
+
+if 'maintenance' not in st.session_state:
+    st.session_state.maintenance = pd.DataFrame(columns=[
+        'RecordID', 'VehicleID', 'ServiceDate', 'ServiceType', 
+        'Mileage', 'Cost', 'ServiceDetails', 'ServiceProvider',
+        'PartsReplaced', 'LaborHours', 'WarrantyCovered', 'Severity'
+    ])
+
+if 'fuel_logs' not in st.session_state:
+    st.session_state.fuel_logs = pd.DataFrame(columns=[
+        'LogID', 'VehicleID', 'Date', 'Odometer', 'FuelAmount', 
+        'FuelCost', 'FuelType', 'MPG', 'ChargingCost', 'ChargingTime'
+    ])
+
+# Sample data for demonstration
+if st.session_state.vehicles.empty:
+    sample_vehicles = pd.DataFrame([
+        {'VehicleID': 1, 'Make': 'Toyota', 'Model': 'Camry', 'Year': 2018, 
+         'CurrentMileage': 45000, 'VehicleType': 'Gas', 'FuelType': 'Regular',
+         'PurchaseDate': '2018-05-15', 'LastServiceDate': '2023-04-10', 
+         'NextServiceDue': '2023-10-10', 'InsuranceProvider': 'Geico', 'PolicyNumber': 'GEC12345'},
+        
+        {'VehicleID': 2, 'Make': 'Honda', 'Model': 'Civic', 'Year': 2020, 
+         'CurrentMileage': 22000, 'VehicleType': 'Hybrid', 'FuelType': 'Premium',
+         'PurchaseDate': '2020-03-20', 'LastServiceDate': '2023-03-15', 
+         'NextServiceDue': '2023-09-15', 'InsuranceProvider': 'Progressive', 'PolicyNumber': 'PRO67890'},
+        
+        {'VehicleID': 3, 'Make': 'Ford', 'Model': 'F-150', 'Year': 2019, 
+         'CurrentMileage': 58000, 'VehicleType': 'Gas', 'FuelType': 'Regular',
+         'PurchaseDate': '2019-07-10', 'LastServiceDate': '2023-05-20', 
+         'NextServiceDue': '2023-11-20', 'InsuranceProvider': 'State Farm', 'PolicyNumber': 'STF45678'},
+        
+        {'VehicleID': 4, 'Make': 'Tesla', 'Model': 'Model 3', 'Year': 2021, 
+         'CurrentMileage': 18000, 'VehicleType': 'Electric', 'FuelType': 'Electric',
+         'PurchaseDate': '2021-02-10', 'LastServiceDate': '2023-06-15', 
+         'NextServiceDue': '2023-12-15', 'BatteryHealth': '95%', 'EVRange': 310,
+         'InsuranceProvider': 'Tesla Insurance', 'PolicyNumber': 'TES12345'}
+    ])
+    st.session_state.vehicles = pd.concat([st.session_state.vehicles, sample_vehicles], ignore_index=True)
+
+if st.session_state.maintenance.empty:
+    sample_maintenance = pd.DataFrame([
+        {'RecordID': 1, 'VehicleID': 1, 'ServiceDate': '2023-04-10', 
+         'ServiceType': 'Oil Change', 'Mileage': 44000, 'Cost': 75.50, 
+         'ServiceDetails': 'Synthetic oil change', 'ServiceProvider': 'Quick Lube',
+         'PartsReplaced': 'Oil filter', 'LaborHours': 0.5, 'WarrantyCovered': False, 'Severity': 'Routine'},
+        
+        {'RecordID': 2, 'VehicleID': 1, 'ServiceDate': '2022-10-15', 
+         'ServiceType': 'Tire Rotation', 'Mileage': 38000, 'Cost': 35.00, 
+         'ServiceDetails': 'Standard rotation', 'ServiceProvider': 'Quick Lube',
+         'PartsReplaced': 'None', 'LaborHours': 0.5, 'WarrantyCovered': False, 'Severity': 'Routine'},
+        
+        {'RecordID': 3, 'VehicleID': 2, 'ServiceDate': '2023-03-15', 
+         'ServiceType': 'Oil Change', 'Mileage': 21000, 'Cost': 65.00, 
+         'ServiceDetails': 'Conventional oil', 'ServiceProvider': 'Dealer',
+         'PartsReplaced': 'Oil filter', 'LaborHours': 0.5, 'WarrantyCovered': True, 'Severity': 'Routine'},
+        
+        {'RecordID': 4, 'VehicleID': 2, 'ServiceDate': '2022-09-10', 
+         'ServiceType': 'Brake Inspection', 'Mileage': 18000, 'Cost': 25.00, 
+         'ServiceDetails': 'Standard inspection', 'ServiceProvider': 'Dealer',
+         'PartsReplaced': 'None', 'LaborHours': 0.5, 'WarrantyCovered': True, 'Severity': 'Routine'},
+        
+        {'RecordID': 5, 'VehicleID': 3, 'ServiceDate': '2023-05-20', 
+         'ServiceType': 'Oil Change', 'Mileage': 57000, 'Cost': 85.00, 
+         'ServiceDetails': 'Heavy-duty synthetic', 'ServiceProvider': 'Local Mechanic',
+         'PartsReplaced': 'Oil filter', 'LaborHours': 0.75, 'WarrantyCovered': False, 'Severity': 'Routine'},
+        
+        {'RecordID': 6, 'VehicleID': 3, 'ServiceDate': '2023-01-15', 
+         'ServiceType': 'Transmission Service', 'Mileage': 52000, 'Cost': 150.00, 
+         'ServiceDetails': 'Fluid flush', 'ServiceProvider': 'Local Mechanic',
+         'PartsReplaced': 'Transmission fluid', 'LaborHours': 1.5, 'WarrantyCovered': False, 'Severity': 'Major'},
+        
+        {'RecordID': 7, 'VehicleID': 4, 'ServiceDate': '2023-06-15', 
+         'ServiceType': 'Battery Check', 'Mileage': 17500, 'Cost': 0.00, 
+         'ServiceDetails': 'Battery health inspection', 'ServiceProvider': 'Tesla Service',
+         'PartsReplaced': 'None', 'LaborHours': 0.5, 'WarrantyCovered': True, 'Severity': 'Routine'},
+        
+        {'RecordID': 8, 'VehicleID': 4, 'ServiceDate': '2022-12-10', 
+         'ServiceType': 'Tire Rotation', 'Mileage': 12000, 'Cost': 50.00, 
+         'ServiceDetails': 'EV tire rotation', 'ServiceProvider': 'Tesla Service',
+         'PartsReplaced': 'None', 'LaborHours': 0.5, 'WarrantyCovered': False, 'Severity': 'Routine'}
+    ])
+    st.session_state.maintenance = pd.concat([st.session_state.maintenance, sample_maintenance], ignore_index=True)
+
+if st.session_state.fuel_logs.empty:
+    sample_fuel_logs = pd.DataFrame([
+        {'LogID': 1, 'VehicleID': 1, 'Date': '2023-06-01', 'Odometer': 44800, 
+         'FuelAmount': 12.5, 'FuelCost': 45.00, 'FuelType': 'Regular', 'MPG': 28.5},
+        
+        {'LogID': 2, 'VehicleID': 1, 'Date': '2023-05-15', 'Odometer': 44400, 
+         'FuelAmount': 13.2, 'FuelCost': 47.50, 'FuelType': 'Regular', 'MPG': 27.8},
+        
+        {'LogID': 3, 'VehicleID': 2, 'Date': '2023-06-05', 'Odometer': 21800, 
+         'FuelAmount': 8.5, 'FuelCost': 38.25, 'FuelType': 'Premium', 'MPG': 35.2},
+        
+        {'LogID': 4, 'VehicleID': 3, 'Date': '2023-06-10', 'Odometer': 57800, 
+         'FuelAmount': 22.0, 'FuelCost': 79.20, 'FuelType': 'Regular', 'MPG': 18.5},
+        
+        {'LogID': 5, 'VehicleID': 4, 'Date': '2023-06-12', 'Odometer': 17900, 
+         'FuelAmount': 0, 'FuelCost': 8.50, 'FuelType': 'Electric', 'ChargingTime': 4.5}
+    ])
+    st.session_state.fuel_logs = pd.concat([st.session_state.fuel_logs, sample_fuel_logs], ignore_index=True)
+
+# Helper functions
+def calculate_next_service(last_service_date, last_service_mileage, current_mileage, service_type, vehicle_type):
+    """Predict next service date based on time or mileage intervals"""
+    service_intervals = {
+        'Gas': {
+            'Oil Change': {'mileage': 5000, 'time': 180},  # days
+            'Tire Rotation': {'mileage': 7500, 'time': 180},
+            'Brake Inspection': {'mileage': 15000, 'time': 365},
+            'Transmission Service': {'mileage': 30000, 'time': 730},
+            'General Inspection': {'mileage': 10000, 'time': 365}
+        },
+        'Hybrid': {
+            'Oil Change': {'mileage': 7500, 'time': 180},
+            'Tire Rotation': {'mileage': 7500, 'time': 180},
+            'Brake Inspection': {'mileage': 15000, 'time': 365},
+            'Battery Check': {'mileage': 10000, 'time': 365},
+            'General Inspection': {'mileage': 10000, 'time': 365}
+        },
+        'Electric': {
+            'Battery Check': {'mileage': 10000, 'time': 365},
+            'Tire Rotation': {'mileage': 10000, 'time': 180},
+            'Brake Inspection': {'mileage': 20000, 'time': 365},
+            'Coolant Check': {'mileage': 30000, 'time': 730},
+            'General Inspection': {'mileage': 10000, 'time': 365}
+        }
+    }
+    
+    if vehicle_type not in service_intervals:
+        vehicle_type = 'Gas'  # default
+    
+    if service_type not in service_intervals[vehicle_type]:
+        service_type = list(service_intervals[vehicle_type].keys())[0]  # first service type as default
+    
+    interval = service_intervals[vehicle_type][service_type]
+    
+    # Calculate by mileage
+    mileage_due = last_service_mileage + interval['mileage']
+    if current_mileage > last_service_mileage:
+        mileage_days = ((mileage_due - current_mileage) / (current_mileage - last_service_mileage)) * (
+            datetime.now() - pd.to_datetime(last_service_date)).days
+    else:
+        mileage_days = 365
+    
+    # Calculate by time
+    time_due = pd.to_datetime(last_service_date) + timedelta(days=interval['time'])
+    time_days = (time_due - datetime.now()).days
+    
+    # Use whichever comes first
+    if mileage_days < time_days:
+        next_service = datetime.now() + timedelta(days=mileage_days)
+    else:
+        next_service = time_due
+    
+    return next_service.date()
+
+def predict_future_costs(df, months=12):
+    """Predict future maintenance costs using linear regression"""
+    if len(df) < 2:
+        return None
+    
+    # Convert dates to numerical values
+    df['Date'] = pd.to_datetime(df['ServiceDate'])
+    df['Days'] = (df['Date'] - df['Date'].min()).dt.days
+    
+    # Group by month
+    monthly = df.set_index('Date').resample('M')['Cost'].sum().reset_index()
+    monthly['Days'] = (monthly['Date'] - monthly['Date'].min()).dt.days
+    
+    # Fit model
+    X = monthly['Days'].values.reshape(-1, 1)
+    y = monthly['Cost'].values
+    
+    model = LinearRegression()
+    model.fit(X, y)
+    
+    # Predict future months
+    last_date = monthly['Date'].max()
+    future_dates = pd.date_range(
+        start=last_date + pd.DateOffset(months=1),
+        periods=months,
+        freq='M'
+    )
+    future_days = [(d - monthly['Date'].min()).days for d in future_dates]
+    
+    predictions = model.predict(np.array(future_days).reshape(-1, 1))
+    
+    return pd.DataFrame({
+        'Date': future_dates,
+        'PredictedCost': predictions
+    })
+
+def calculate_vehicle_health(vehicle_id):
+    """Calculate a health score for a vehicle based on maintenance history"""
+    vehicle_data = st.session_state.vehicles[st.session_state.vehicles['VehicleID'] == vehicle_id]
+    if vehicle_data.empty:
+        return None
+    
+    maintenance_data = st.session_state.maintenance[st.session_state.maintenance['VehicleID'] == vehicle_id]
+    if maintenance_data.empty:
+        return 100  # default perfect score if no maintenance
+    
+    # Calculate score based on various factors
+    score = 100
+    
+    # Penalize for major services
+    major_services = maintenance_data[maintenance_data['Severity'] == 'Major']
+    score -= len(major_services) * 5
+    
+    # Penalize for overdue services
+    last_service = pd.to_datetime(vehicle_data['LastServiceDate'].iloc[0])
+    next_due = pd.to_datetime(vehicle_data['NextServiceDue'].iloc[0])
+    if next_due < datetime.now():
+        days_overdue = (datetime.now() - next_due).days
+        score -= min(days_overdue * 0.1, 20)  # max 20 point penalty
+    
+    # Penalize for high cost services
+    avg_cost = maintenance_data['Cost'].mean()
+    if avg_cost > 200:
+        score -= min((avg_cost - 200) * 0.05, 15)  # max 15 point penalty
+    
+    # Ensure score is within bounds
+    return max(0, min(100, score))
+
+def cluster_vehicles():
+    """Cluster vehicles based on maintenance patterns"""
+    if st.session_state.maintenance.empty or st.session_state.vehicles.empty:
+        return None
+    
+    merged_data = pd.merge(
+        st.session_state.maintenance,
+        st.session_state.vehicles,
+        on='VehicleID'
+    )
+    
+    # Prepare features for clustering
+    features = merged_data.groupby('VehicleID').agg({
+        'Cost': ['mean', 'sum', 'count'],
+        'Mileage': 'max',
+        'Severity': lambda x: (x == 'Major').sum()
+    }).reset_index()
+    
+    features.columns = [
+        'VehicleID', 'AvgCost', 'TotalCost', 'ServiceCount', 
+        'Mileage', 'MajorServiceCount'
+    ]
+    
+    # Add vehicle age
+    vehicle_info = st.session_state.vehicles[['VehicleID', 'Year']]
+    features = pd.merge(features, vehicle_info, on='VehicleID')
+    features['VehicleAge'] = datetime.now().year - features['Year']
+    
+    # Normalize features
+    scaler = StandardScaler()
+    X = features[['AvgCost', 'TotalCost', 'ServiceCount', 'Mileage', 'MajorServiceCount', 'VehicleAge']]
+    X_scaled = scaler.fit_transform(X)
+    
+    # Perform clustering
+    kmeans = KMeans(n_clusters=3, random_state=42)
+    clusters = kmeans.fit_predict(X_scaled)
+    
+    features['Cluster'] = clusters
+    
+    # Merge with vehicle info for display
+    result = pd.merge(
+        features,
+        st.session_state.vehicles[['VehicleID', 'Make', 'Model', 'Year', 'VehicleType']],
+        on='VehicleID'
+    )
+    
+    return result
+
+# Sidebar navigation and user info
+st.sidebar.title(f"Welcome, {st.session_state.user_info['name']}")
+if st.sidebar.button("Logout"):
+    st.session_state.authenticated = False
+    st.session_state.username = None
+    st.session_state.user_info = None
+    st.experimental_rerun()
+
+page = st.sidebar.radio("Navigation", [
+    "Dashboard", 
+    "Vehicle Management", 
+    "Maintenance Records", 
+    "Fuel/Charging Logs",
+    "Data Import/Export",
+    "Advanced Analytics",
+    "Vehicle Health"
+])
+
+# Dashboard Page
+if page == "Dashboard":
+    st.title("🚗 Car Maintenance Dashboard")
+    st.markdown("### Overview of your vehicle maintenance")
+    
+    # Summary metrics
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.markdown("<div class='metric-card'>"
+                    "<h3>Total Vehicles</h3>"
+                    f"<h2>{len(st.session_state.vehicles)}</h2>"
+                    "</div>", unsafe_allow_html=True)
+    with col2:
+        total_cost = st.session_state.maintenance['Cost'].sum()
+        st.markdown("<div class='metric-card'>"
+                    "<h3>Total Maintenance Cost</h3>"
+                    f"<h2>${total_cost:,.2f}</h2>"
+                    "</div>", unsafe_allow_html=True)
+    with col3:
+        avg_cost = st.session_state.maintenance.groupby('VehicleID')['Cost'].sum().mean()
+        st.markdown("<div class='metric-card'>"
+                    "<h3>Avg Cost per Vehicle</h3>"
+                    f"<h2>${avg_cost:,.2f}</h2>"
+                    "</div>", unsafe_allow_html=True)
+    with col4:
+        overdue = st.session_state.vehicles[
+            pd.to_datetime(st.session_state.vehicles['NextServiceDue']) < datetime.now()
+        ].shape[0]
+        st.markdown("<div class='metric-card'>"
+                    "<h3>Overdue Services</h3>"
+                    f"<h2>{overdue}</h2>"
+                    "</div>", unsafe_allow_html=True)
+    
+    # Fleet composition
+    st.markdown("### 🚘 Fleet Composition")
+    if not st.session_state.vehicles.empty:
+        col1, col2 = st.columns(2)
+        with col1:
+            type_dist = st.session_state.vehicles['VehicleType'].value_counts().reset_index()
+            type_dist.columns = ['VehicleType', 'Count']
+            fig = px.pie(
+                type_dist,
+                values='Count',
+                names='VehicleType',
+                title='Vehicle Types in Fleet'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            make_dist = st.session_state.vehicles['Make'].value_counts().reset_index()
+            make_dist.columns = ['Make', 'Count']
+            fig = px.bar(
+                make_dist,
+                x='Make',
+                y='Count',
+                title='Vehicle Makes in Fleet'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    
+    # Upcoming services
+    st.markdown("### ⏳ Upcoming Services")
+    upcoming = st.session_state.vehicles[
+        (pd.to_datetime(st.session_state.vehicles['NextServiceDue']) >= datetime.now()) &
+        (pd.to_datetime(st.session_state.vehicles['NextServiceDue']) <= datetime.now() + timedelta(days=30))
+    ]
+    if not upcoming.empty:
+        st.dataframe(upcoming[['Make', 'Model', 'VehicleType', 'NextServiceDue']], hide_index=True)
+    else:
+        st.info("No upcoming services in the next 30 days.")
+    
+    # Maintenance cost trend
+    st.markdown("### 💰 Maintenance Cost Trend")
+    if not st.session_state.maintenance.empty:
+        maintenance_with_vehicle = pd.merge(
+            st.session_state.maintenance,
+            st.session_state.vehicles,
+            on='VehicleID'
+        )
+        maintenance_with_vehicle['ServiceDate'] = pd.to_datetime(maintenance_with_vehicle['ServiceDate'])
+        
+        # Group by month and vehicle type
+        monthly_cost = maintenance_with_vehicle.set_index('ServiceDate').groupby([
+            pd.Grouper(freq='M'), 'VehicleType'
+        ])['Cost'].sum().reset_index()
+        
+        fig = px.line(
+            monthly_cost,
+            x='ServiceDate',
+            y='Cost',
+            color='VehicleType',
+            title='Monthly Maintenance Costs by Vehicle Type',
+            markers=True
+        )
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("No maintenance records available for visualization.")
+    
+    # Service type distribution
+    st.markdown("### 🔧 Service Type Distribution")
+    if not st.session_state.maintenance.empty:
+        service_counts = st.session_state.maintenance['ServiceType'].value_counts().reset_index()
+        service_counts.columns = ['ServiceType', 'Count']
+        
+        fig = px.pie(
+            service_counts,
+            values='Count',
+            names='ServiceType',
+            title='Distribution of Service Types'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+# Vehicle Management Page
+elif page == "Vehicle Management":
+    st.title("🚘 Vehicle Management")
+    
+    tab1, tab2 = st.tabs(["Add/Edit Vehicle", "View Vehicles"])
+    
+    with tab1:
+        with st.form("vehicle_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                make = st.text_input("Make*", placeholder="Toyota")
+                model = st.text_input("Model*", placeholder="Camry")
+                year = st.number_input("Year*", min_value=1980, max_value=datetime.now().year, value=2020)
+                vehicle_type = st.selectbox("Vehicle Type*", ["Gas", "Hybrid", "Electric", "Diesel"])
+            with col2:
+                current_mileage = st.number_input("Current Mileage*", min_value=0, value=10000)
+                purchase_date = st.date_input("Purchase Date", value=datetime.now() - timedelta(days=365))
+                fuel_type = st.selectbox("Fuel Type", ["Regular", "Premium", "Diesel", "Electric", "Hybrid"])
+            
+            # EV-specific fields
+            if vehicle_type == "Electric":
+                battery_health = st.text_input("Battery Health", placeholder="e.g., 95%")
+                ev_range = st.number_input("EV Range (miles)", min_value=0, value=250)
+            else:
+                battery_health = ""
+                ev_range = 0
+            
+            # Insurance info
+            st.markdown("### Insurance Information")
+            ins_col1, ins_col2 = st.columns(2)
+            with ins_col1:
+                insurance_provider = st.text_input("Insurance Provider")
+            with ins_col2:
+                policy_number = st.text_input("Policy Number")
+            
+            # Generate a unique VehicleID
+            if st.session_state.vehicles.empty:
+                vehicle_id = 1
+            else:
+                vehicle_id = st.session_state.vehicles['VehicleID'].max() + 1
+            
+            submitted = st.form_submit_button("Save Vehicle")
+            if submitted:
+                if not make or not model:
+                    st.error("Make and Model are required fields!")
+                else:
+                    new_vehicle = pd.DataFrame([{
+                        'VehicleID': vehicle_id,
+                        'Make': make,
+                        'Model': model,
+                        'Year': year,
+                        'CurrentMileage': current_mileage,
+                        'VehicleType': vehicle_type,
+                        'PurchaseDate': purchase_date,
+                        'LastServiceDate': None,
+                        'NextServiceDue': None,
+                        'BatteryHealth': battery_health,
+                        'EVRange': ev_range,
+                        'FuelType': fuel_type,
+                        'InsuranceProvider': insurance_provider,
+                        'PolicyNumber': policy_number
+                    }])
+                    
+                    st.session_state.vehicles = pd.concat([st.session_state.vehicles, new_vehicle], ignore_index=True)
+                    st.success("Vehicle added successfully!")
+    
+    with tab2:
+        if not st.session_state.vehicles.empty:
+            st.dataframe(st.session_state.vehicles, hide_index=True)
+            
+            # Vehicle selector for deletion
+            vehicles_list = st.session_state.vehicles.apply(
+                lambda x: f"{x['Make']} {x['Model']} ({x['Year']}) - ID: {x['VehicleID']}", axis=1
+            ).tolist()
+            
+            selected_vehicle = st.selectbox("Select vehicle to delete", vehicles_list)
+            
+            if st.button("Delete Selected Vehicle"):
+                vehicle_id_to_delete = int(selected_vehicle.split("ID: ")[1])
+                st.session_state.vehicles = st.session_state.vehicles[
+                    st.session_state.vehicles['VehicleID'] != vehicle_id_to_delete
+                ]
+                # Also delete associated maintenance records and fuel logs
+                st.session_state.maintenance = st.session_state.maintenance[
+                    st.session_state.maintenance['VehicleID'] != vehicle_id_to_delete
+                ]
+                st.session_state.fuel_logs = st.session_state.fuel_logs[
+                    st.session_state.fuel_logs['VehicleID'] != vehicle_id_to_delete
+                ]
+                st.success("Vehicle and all associated records deleted successfully!")
+        else:
+            st.info("No vehicles added yet.")
+
+# Maintenance Records Page
+elif page == "Maintenance Records":
+    st.title("🔧 Maintenance Records")
+    
+    tab1, tab2 = st.tabs(["Add/Edit Record", "View Records"])
+    
+    with tab1:
+        if not st.session_state.vehicles.empty:
+            with st.form("maintenance_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    # Vehicle selector
+                    vehicle_options = st.session_state.vehicles.apply(
+                        lambda x: f"{x['Make']} {x['Model']} ({x['Year']})", axis=1
+                    ).tolist()
+                    selected_vehicle = st.selectbox("Vehicle*", vehicle_options)
+                    vehicle_id = st.session_state.vehicles.loc[
+                        st.session_state.vehicles.apply(
+                            lambda x: f"{x['Make']} {x['Model']} ({x['Year']})", axis=1
+                        ) == selected_vehicle, 'VehicleID'].values[0]
+                    
+                    vehicle_type = st.session_state.vehicles.loc[
+                        st.session_state.vehicles['VehicleID'] == vehicle_id, 'VehicleType'].values[0]
+                    
+                    service_date = st.date_input("Service Date*", value=datetime.now())
+                    
+                    # Service type options based on vehicle type
+                    if vehicle_type == "Gas":
+                        service_types = ["Oil Change", "Tire Rotation", "Brake Inspection", 
+                                       "Transmission Service", "General Inspection", "Other"]
+                    elif vehicle_type == "Hybrid":
+                        service_types = ["Oil Change", "Tire Rotation", "Brake Inspection", 
+                                        "Battery Check", "General Inspection", "Other"]
+                    else:  # Electric
+                        service_types = ["Battery Check", "Tire Rotation", "Brake Inspection", 
+                                       "Coolant Check", "General Inspection", "Other"]
+                    
+                    service_type = st.selectbox("Service Type*", service_types)
+                with col2:
+                    mileage = st.number_input("Mileage at Service*", min_value=0)
+                    cost = st.number_input("Cost*", min_value=0.0, format="%.2f")
+                    service_provider = st.text_input("Service Provider", placeholder="Dealer/Mechanic Name")
+                    severity = st.selectbox("Severity", ["Routine", "Minor", "Major", "Critical"])
+                
+                # Additional details
+                parts_replaced = st.text_input("Parts Replaced (comma separated)")
+                labor_hours = st.number_input("Labor Hours", min_value=0.0, step=0.5, value=1.0)
+                warranty_covered = st.checkbox("Warranty Covered")
+                service_details = st.text_area("Service Details", placeholder="Any additional details")
+                
+                # Generate a unique RecordID
+                if st.session_state.maintenance.empty:
+                    record_id = 1
+                else:
+                    record_id = st.session_state.maintenance['RecordID'].max() + 1
+                
+                submitted = st.form_submit_button("Save Record")
+                if submitted:
+                    new_record = pd.DataFrame([{
+                        'RecordID': record_id,
+                        'VehicleID': vehicle_id,
+                        'ServiceDate': service_date,
+                        'ServiceType': service_type,
+                        'Mileage': mileage,
+                        'Cost': cost,
+                        'ServiceDetails': service_details,
+                        'ServiceProvider': service_provider,
+                        'PartsReplaced': parts_replaced,
+                        'LaborHours': labor_hours,
+                        'WarrantyCovered': warranty_covered,
+                        'Severity': severity
+                    }])
+                    
+                    st.session_state.maintenance = pd.concat([st.session_state.maintenance, new_record], ignore_index=True)
+                    
+                    # Update vehicle's last service and next due date
+                    vehicle_idx = st.session_state.vehicles[st.session_state.vehicles['VehicleID'] == vehicle_id].index[0]
+                    st.session_state.vehicles.at[vehicle_idx, 'LastServiceDate'] = service_date
+                    st.session_state.vehicles.at[vehicle_idx, 'CurrentMileage'] = mileage
+                    
+                    # Calculate next service due
+                    next_service = calculate_next_service(
+                        service_date, mileage, mileage, service_type, vehicle_type
+                    )
+                    st.session_state.vehicles.at[vehicle_idx, 'NextServiceDue'] = next_service
+                    
+                    st.success("Maintenance record added successfully!")
+        else:
+            st.warning("Please add vehicles first before entering maintenance records.")
+    
+    with tab2:
+        if not st.session_state.maintenance.empty:
+            # Merge with vehicle data for better display
+            merged_data = pd.merge(
+                st.session_state.maintenance,
+                st.session_state.vehicles[['VehicleID', 'Make', 'Model', 'Year']],
+                on='VehicleID'
+            )
+            
+            # Convert ServiceDate to datetime at the start
+            merged_data['ServiceDate'] = pd.to_datetime(merged_data['ServiceDate'])
+            
+            # Display options
+            col1, col2 = st.columns(2)
+            with col1:
+                show_columns = st.multiselect(
+                    "Select columns to display",
+                    merged_data.columns,
+                    default=['Make', 'Model', 'ServiceDate', 'ServiceType', 'Cost', 'Mileage', 'Severity']
+                )
+            with col2:
+                filter_type = st.selectbox("Filter by service type", ["All"] + list(merged_data['ServiceType'].unique()))
+                severity_filter = st.selectbox("Filter by severity", ["All"] + list(merged_data['Severity'].unique()))
+            
+            # Apply filters
+            display_data = merged_data.copy()
+            if filter_type != "All":
+                display_data = display_data[display_data['ServiceType'] == filter_type]
+            if severity_filter != "All":
+                display_data = display_data[display_data['Severity'] == severity_filter]
+            
+            # Select columns and prepare for display
+            if show_columns:
+                display_data = display_data[show_columns].copy()
+                
+                # Sort by date while still in datetime format
+                display_data = display_data.sort_values('ServiceDate', ascending=False)
+                
+                # Format date for display after sorting
+                if 'ServiceDate' in display_data.columns:
+                    display_data['ServiceDate'] = display_data['ServiceDate'].dt.strftime('%Y-%m-%d')
+                
+                # Format cost if present
+                if 'Cost' in display_data.columns:
+                    display_data['Cost'] = display_data['Cost'].round(2)
+                
+                st.dataframe(display_data, hide_index=True)
+            else:
+                st.warning("Please select at least one column to display.")
+            
+            # Record selector for deletion
+            record_options = merged_data.apply(
+                lambda x: f"{x['Make']} {x['Model']} - {x['ServiceType']} on {x['ServiceDate'].strftime('%Y-%m-%d')} (ID: {x['RecordID']})", 
+                axis=1
+            ).tolist()
+            
+            selected_record = st.selectbox("Select record to delete", record_options)
+            
+            if st.button("Delete Selected Record"):
+                record_id_to_delete = int(selected_record.split("ID: ")[1].replace(")", ""))
+                st.session_state.maintenance = st.session_state.maintenance[
+                    st.session_state.maintenance['RecordID'] != record_id_to_delete
+                ]
+                st.success("Record deleted successfully!")
+        else:
+            st.info("No maintenance records added yet.")
+
+# Fuel/Charging Logs Page
+elif page == "Fuel/Charging Logs":
+    st.title("⛽🔌 Fuel/Charging Logs")
+    
+    tab1, tab2 = st.tabs(["Add Log Entry", "View Logs & Analysis"])
+    
+    with tab1:
+        if not st.session_state.vehicles.empty:
+            with st.form("fuel_log_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    # Vehicle selector
+                    vehicle_options = st.session_state.vehicles.apply(
+                        lambda x: f"{x['Make']} {x['Model']} ({x['Year']})", axis=1
+                    ).tolist()
+                    selected_vehicle = st.selectbox("Vehicle*", vehicle_options)
+                    vehicle_id = st.session_state.vehicles.loc[
+                        st.session_state.vehicles.apply(
+                            lambda x: f"{x['Make']} {x['Model']} ({x['Year']})", axis=1
+                        ) == selected_vehicle, 'VehicleID'].values[0]
+                    
+                    vehicle_type = st.session_state.vehicles.loc[
+                        st.session_state.vehicles['VehicleID'] == vehicle_id, 'VehicleType'].values[0]
+                    
+                    log_date = st.date_input("Date*", value=datetime.now())
+                    odometer = st.number_input("Odometer Reading*", min_value=0)
+                with col2:
+                    if vehicle_type == "Electric":
+                        charging_cost = st.number_input("Charging Cost ($)", min_value=0.0, format="%.2f")
+                        charging_time = st.number_input("Charging Time (hours)", min_value=0.0, step=0.5)
+                        fuel_amount = 0
+                        fuel_cost = 0
+                        fuel_type = "Electric"
+                        mpg = 0
+                    else:
+                        fuel_type = st.selectbox("Fuel Type", ["Regular", "Premium", "Diesel"])
+                        fuel_amount = st.number_input("Fuel Amount (gallons)*", min_value=0.0, step=0.1)
+                        fuel_cost = st.number_input("Fuel Cost ($)*", min_value=0.0, format="%.2f")
+                        mpg = st.number_input("MPG (if known)", min_value=0.0)
+                        charging_cost = 0
+                        charging_time = 0
+                
+                # Generate a unique LogID
+                if st.session_state.fuel_logs.empty:
+                    log_id = 1
+                else:
+                    log_id = st.session_state.fuel_logs['LogID'].max() + 1
+                
+                submitted = st.form_submit_button("Save Log Entry")
+                if submitted:
+                    new_log = pd.DataFrame([{
+                        'LogID': log_id,
+                        'VehicleID': vehicle_id,
+                        'Date': log_date,
+                        'Odometer': odometer,
+                        'FuelAmount': fuel_amount,
+                        'FuelCost': fuel_cost,
+                        'FuelType': fuel_type,
+                        'MPG': mpg,
+                        'ChargingCost': charging_cost,
+                        'ChargingTime': charging_time
+                    }])
+                    
+                    st.session_state.fuel_logs = pd.concat([st.session_state.fuel_logs, new_log], ignore_index=True)
+                    st.success("Fuel/charging log added successfully!")
+        else:
+            st.warning("Please add vehicles first before entering fuel/charging logs.")
+    
+    with tab2:
+        if not st.session_state.fuel_logs.empty:
+            # Merge with vehicle data
+            merged_data = pd.merge(
+                st.session_state.fuel_logs,
+                st.session_state.vehicles[['VehicleID', 'Make', 'Model', 'Year', 'VehicleType']],
+                on='VehicleID'
+            )
+            
+            # Convert Date column to datetime at the start
+            merged_data['Date'] = pd.to_datetime(merged_data['Date'])
+            
+            # Display options
+            col1, col2 = st.columns(2)
+            with col1:
+                # Get available columns from merged data
+                available_columns = merged_data.columns.tolist()
+                default_columns = ['Make', 'Model', 'Date', 'Odometer', 'FuelType', 'FuelAmount', 'FuelCost']
+                
+                show_columns = st.multiselect(
+                    "Select columns to display",
+                    available_columns,
+                    default=[col for col in default_columns if col in available_columns]
+                )
+            with col2:
+                # Create vehicle filter options
+                vehicle_names = merged_data.apply(
+                    lambda x: f"{x['Make']} {x['Model']} ({x['Year']})", axis=1
+                ).unique().tolist()
+                vehicle_filter = st.selectbox("Filter by vehicle", ["All"] + vehicle_names)
+                
+                # Get unique fuel types for filter
+                fuel_types = merged_data['FuelType'].unique().tolist()
+                fuel_type_filter = st.selectbox("Filter by fuel type", ["All"] + fuel_types)
+            
+            # Apply filters
+            display_data = merged_data.copy()
+            if vehicle_filter != "All":
+                vehicle_info = vehicle_filter.split(" (")[0]  # Get make and model without year
+                display_data = display_data[
+                    display_data.apply(
+                        lambda x: f"{x['Make']} {x['Model']}" == vehicle_info, 
+                        axis=1
+                    )
+                ]
+            if fuel_type_filter != "All":
+                display_data = display_data[display_data['FuelType'] == fuel_type_filter]
+            
+            # Select columns and format for display
+            if show_columns:
+                display_data = display_data[show_columns].copy()
+                
+                # Format date for display after sorting
+                if 'Date' in display_data.columns:
+                    display_data = display_data.sort_values('Date', ascending=False)
+                    display_data['Date'] = display_data['Date'].dt.strftime('%Y-%m-%d')
+                
+                st.dataframe(display_data, hide_index=True)
+            else:
+                st.warning("Please select at least one column to display.")
+            
+            # Fuel efficiency analysis
+            st.markdown("### ⛽ Fuel Efficiency Analysis")
+            if len(merged_data) > 1:
+                # Calculate MPG if not provided
+                merged_data = merged_data.sort_values(['VehicleID', 'Date'])
+                merged_data['MilesDriven'] = merged_data.groupby('VehicleID')['Odometer'].diff()
+                
+                # Handle MPG calculation safely
+                merged_data['MPG_Calculated'] = 0.0  # Default value
+                mask = (merged_data['FuelAmount'] > 0) & (merged_data['MilesDriven'] > 0)
+                merged_data.loc[mask, 'MPG_Calculated'] = (
+                    merged_data.loc[mask, 'MilesDriven'] / merged_data.loc[mask, 'FuelAmount']
+                )
+                
+                # Filter out EVs and invalid entries
+                fuel_data = merged_data[
+                    (merged_data['VehicleType'] != 'Electric') & 
+                    (merged_data['FuelAmount'] > 0) & 
+                    (merged_data['MilesDriven'] > 0)
+                ].copy()
+                
+                if not fuel_data.empty:
+                    # Plot MPG trends
+                    fig = px.line(
+                        fuel_data,
+                        x='Date',
+                        y='MPG_Calculated',
+                        color='Make',
+                        line_group='Model',
+                        title='Fuel Efficiency Over Time',
+                        markers=True
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Cost analysis
+                    # Convert Date to datetime first
+                    fuel_data['Date'] = pd.to_datetime(fuel_data['Date'])
+                    monthly_cost = fuel_data.groupby([
+                        pd.Grouper(key='Date', freq='M'), 'Make', 'Model'
+                    ])['FuelCost'].sum().reset_index()
+                    
+                    fig = px.bar(
+                        monthly_cost,
+                        x='Date',
+                        y='FuelCost',
+                        color='Make',
+                        title='Monthly Fuel Costs by Vehicle'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No valid fuel consumption data available for analysis.")
+            
+            # EV charging analysis
+            ev_data = merged_data[merged_data['VehicleType'] == 'Electric']
+            if not ev_data.empty:
+                st.markdown("### 🔌 EV Charging Analysis")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    fig = px.bar(
+                        ev_data,
+                        x='Date',
+                        y='ChargingCost',
+                        title='EV Charging Costs Over Time'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    fig = px.bar(
+                        ev_data,
+                        x='Date',
+                        y='ChargingTime',
+                        title='EV Charging Time Over Time'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            # Log selector for deletion
+            log_options = merged_data.apply(
+                lambda x: f"{x['Make']} {x['Model']} - {x['Date']} (ID: {x['LogID']})", axis=1
+            ).tolist()
+            
+            selected_log = st.selectbox("Select log to delete", log_options)
+            
+            if st.button("Delete Selected Log"):
+                log_id_to_delete = int(selected_log.split("ID: ")[1].replace(")", ""))
+                st.session_state.fuel_logs = st.session_state.fuel_logs[
+                    st.session_state.fuel_logs['LogID'] != log_id_to_delete
+                ]
+                st.success("Log deleted successfully!")
+        else:
+            st.info("No fuel/charging logs added yet.")
+
+# Data Import/Export Page
+elif page == "Data Import/Export":
+    st.title("📊 Data Import/Export")
+    
+    tab1, tab2, tab3 = st.tabs(["Import Data", "Export Data", "Backup/Restore"])
+    
+    with tab1:
+        st.markdown("### Import Vehicle Data")
+        vehicle_file = st.file_uploader("Upload Vehicle Data (CSV)", type="csv")
+        if vehicle_file is not None:
+            vehicle_data = pd.read_csv(vehicle_file)
+            # Check required columns
+            required_cols = ['Make', 'Model', 'Year', 'CurrentMileage', 'VehicleType']
+            if all(col in vehicle_data.columns for col in required_cols):
+                # Generate VehicleIDs
+                if st.session_state.vehicles.empty:
+                    start_id = 1
+                else:
+                    start_id = st.session_state.vehicles['VehicleID'].max() + 1
+                
+                vehicle_data['VehicleID'] = range(start_id, start_id + len(vehicle_data))
+                
+                # Fill optional columns if not present
+                for col in ['PurchaseDate', 'LastServiceDate', 'NextServiceDue', 'BatteryHealth', 
+                          'EVRange', 'FuelType', 'InsuranceProvider', 'PolicyNumber']:
+                    if col not in vehicle_data.columns:
+                        vehicle_data[col] = None
+                
+                st.session_state.vehicles = pd.concat([st.session_state.vehicles, vehicle_data], ignore_index=True)
+                st.success(f"Successfully imported {len(vehicle_data)} vehicle records!")
+            else:
+                st.error(f"CSV must contain these columns: {', '.join(required_cols)}")
+        
+        st.markdown("### Import Maintenance Data")
+        maintenance_file = st.file_uploader("Upload Maintenance Data (CSV)", type="csv")
+        if maintenance_file is not None:
+            maintenance_data = pd.read_csv(maintenance_file)
+            # Check required columns
+            required_cols = ['VehicleID', 'ServiceDate', 'ServiceType', 'Mileage', 'Cost']
+            if all(col in maintenance_data.columns for col in required_cols):
+                # Generate RecordIDs
+                if st.session_state.maintenance.empty:
+                    start_id = 1
+                else:
+                    start_id = st.session_state.maintenance['RecordID'].max() + 1
+                
+                maintenance_data['RecordID'] = range(start_id, start_id + len(maintenance_data))
+                
+                # Fill optional columns if not present
+                for col in ['ServiceDetails', 'ServiceProvider', 'PartsReplaced', 
+                            'LaborHours', 'WarrantyCovered', 'Severity']:
+                    if col not in maintenance_data.columns:
+                        maintenance_data[col] = "" if col in ['ServiceDetails', 'ServiceProvider', 'PartsReplaced'] else False if col == 'WarrantyCovered' else "Routine"
+                
+                st.session_state.maintenance = pd.concat([st.session_state.maintenance, maintenance_data], ignore_index=True)
+                st.success(f"Successfully imported {len(maintenance_data)} maintenance records!")
+            else:
+                st.error(f"CSV must contain these columns: {', '.join(required_cols)}")
+        
+        st.markdown("### Import Fuel/Charging Logs")
+        fuel_file = st.file_uploader("Upload Fuel/Charging Data (CSV)", type="csv")
+        if fuel_file is not None:
+            fuel_data = pd.read_csv(fuel_file)
+            # Check required columns
+            required_cols = ['VehicleID', 'Date', 'Odometer']
+            if all(col in fuel_data.columns for col in required_cols):
+                # Generate LogIDs
+                if st.session_state.fuel_logs.empty:
+                    start_id = 1
+                else:
+                    start_id = st.session_state.fuel_logs['LogID'].max() + 1
+                
+                fuel_data['LogID'] = range(start_id, start_id + len(fuel_data))
+                
+                # Fill optional columns if not present
+                for col in ['FuelAmount', 'FuelCost', 'FuelType', 'MPG', 'ChargingCost', 'ChargingTime']:
+                    if col not in fuel_data.columns:
+                        fuel_data[col] = 0
+                
+                st.session_state.fuel_logs = pd.concat([st.session_state.fuel_logs, fuel_data], ignore_index=True)
+                st.success(f"Successfully imported {len(fuel_data)} fuel/charging records!")
+            else:
+                st.error(f"CSV must contain these columns: {', '.join(required_cols)}")
+    
+    with tab2:
+        st.markdown("### Export Vehicle Data")
+        if not st.session_state.vehicles.empty:
+            csv = st.session_state.vehicles.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Download Vehicle Data as CSV",
+                data=csv,
+                file_name="vehicle_data.csv",
+                mime="text/csv"
+            )
+        else:
+            st.info("No vehicle data to export.")
+        
+        st.markdown("### Export Maintenance Data")
+        if not st.session_state.maintenance.empty:
+            csv = st.session_state.maintenance.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Download Maintenance Data as CSV",
+                data=csv,
+                file_name="maintenance_data.csv",
+                mime="text/csv"
+            )
+        else:
+            st.info("No maintenance data to export.")
+        
+        st.markdown("### Export Fuel/Charging Data")
+        if not st.session_state.fuel_logs.empty:
+            csv = st.session_state.fuel_logs.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Download Fuel/Charging Data as CSV",
+                data=csv,
+                file_name="fuel_logs_data.csv",
+                mime="text/csv"
+            )
+        else:
+            st.info("No fuel/charging data to export.")
+    
+    with tab3:
+        st.markdown("### Backup All Data")
+        if not st.session_state.vehicles.empty or not st.session_state.maintenance.empty or not st.session_state.fuel_logs.empty:
+            # Create a copy of the data and convert dates to strings
+            vehicles_data = st.session_state.vehicles.copy()
+            maintenance_data = st.session_state.maintenance.copy()
+            fuel_logs_data = st.session_state.fuel_logs.copy()
+            
+            # Convert date columns in vehicles data
+            date_columns = ['PurchaseDate', 'LastServiceDate', 'NextServiceDue']
+            for col in date_columns:
+                if col in vehicles_data.columns:
+                    vehicles_data[col] = pd.to_datetime(vehicles_data[col]).dt.strftime('%Y-%m-%d')
+            
+            # Convert date columns in maintenance data
+            if 'ServiceDate' in maintenance_data.columns:
+                maintenance_data['ServiceDate'] = pd.to_datetime(maintenance_data['ServiceDate']).dt.strftime('%Y-%m-%d')
+            
+            # Convert date columns in fuel logs data
+            if 'Date' in fuel_logs_data.columns:
+                fuel_logs_data['Date'] = pd.to_datetime(fuel_logs_data['Date']).dt.strftime('%Y-%m-%d')
+            
+            # Create backup dictionary with converted data
+            backup_data = {
+                'vehicles': vehicles_data.to_dict('records'),
+                'maintenance': maintenance_data.to_dict('records'),
+                'fuel_logs': fuel_logs_data.to_dict('records')
+            }
+            
+            try:
+                # Convert to JSON
+                json_data = json.dumps(backup_data)
+                
+                st.download_button(
+                    label="Download Full Backup",
+                    data=json_data,
+                    file_name="car_maintenance_backup.json",
+                    mime="application/json"
+                )
+            except Exception as e:
+                st.error(f"Error creating backup: {str(e)}")
+        else:
+            st.info("No data to backup.")
+        
+        st.markdown("### Restore from Backup")
+        backup_file = st.file_uploader("Upload Backup File (JSON)", type="json")
+        if backup_file is not None:
+            try:
+                backup_data = json.loads(backup_file.read())
+                
+                # Convert string dates back to datetime objects
+                if 'vehicles' in backup_data:
+                    vehicles_df = pd.DataFrame(backup_data['vehicles'])
+                    for col in ['PurchaseDate', 'LastServiceDate', 'NextServiceDue']:
+                        if col in vehicles_df.columns:
+                            vehicles_df[col] = pd.to_datetime(vehicles_df[col]).dt.date
+                    st.session_state.vehicles = vehicles_df
+                
+                if 'maintenance' in backup_data:
+                    maintenance_df = pd.DataFrame(backup_data['maintenance'])
+                    if 'ServiceDate' in maintenance_df.columns:
+                        maintenance_df['ServiceDate'] = pd.to_datetime(maintenance_df['ServiceDate']).dt.date
+                    st.session_state.maintenance = maintenance_df
+                
+                if 'fuel_logs' in backup_data:
+                    fuel_logs_df = pd.DataFrame(backup_data['fuel_logs'])
+                    if 'Date' in fuel_logs_df.columns:
+                        fuel_logs_df['Date'] = pd.to_datetime(fuel_logs_df['Date']).dt.date
+                    st.session_state.fuel_logs = fuel_logs_df
+                
+                st.success("Data restored successfully!")
+            except Exception as e:
+                st.error(f"Error restoring backup: {str(e)}")
+
+# Advanced Analytics Page
+elif page == "Advanced Analytics":
+    st.title("📈 Advanced Analytics")
+    
+    try:
+        if st.session_state.vehicles.empty:
+            st.warning("Please add vehicles first to view analytics.")
+        elif st.session_state.maintenance.empty:
+            st.warning("Please add some service records to view analytics.")
+        else:
+            # Merge data with proper data type handling
+            try:
+                merged_data = pd.merge(
+                    st.session_state.maintenance,
+                    st.session_state.vehicles,
+                    on='VehicleID',
+                    how='left'
+                )
+                # Convert and validate data types
+                merged_data['ServiceDate'] = pd.to_datetime(merged_data['ServiceDate'], errors='coerce')
+                merged_data['Cost'] = pd.to_numeric(merged_data['Cost'], errors='coerce')
+                merged_data['Mileage'] = pd.to_numeric(merged_data['Mileage'], errors='coerce')
+                
+                # Remove invalid entries
+                merged_data = merged_data.dropna(subset=['ServiceDate', 'Cost', 'Mileage'])
+                
+                if not merged_data.empty:
+                    tab1, tab2 = st.tabs(["Service History", "Cost Analysis"])
+                    
+                    with tab1:
+                        st.header("Service History")
+                        
+                        try:
+                            # Vehicle selector
+                            vehicle_list = [f"{row['Year']} {row['Make']} {row['Model']}" 
+                                          for _, row in st.session_state.vehicles.iterrows()]
+                            selected_vehicle = st.selectbox("Select Vehicle", ["All Vehicles"] + vehicle_list)
+                            
+                            # Filter data based on selection
+                            if selected_vehicle == "All Vehicles":
+                                display_data = merged_data.copy()
+                            else:
+                                vehicle_idx = vehicle_list.index(selected_vehicle)
+                                vehicle_id = st.session_state.vehicles.iloc[vehicle_idx]['VehicleID']
+                                display_data = merged_data[merged_data['VehicleID'] == vehicle_id].copy()
+                            
+                            if not display_data.empty:
+                                # Service type filter
+                                service_types = ['All Types'] + sorted(display_data['ServiceType'].unique().tolist())
+                                selected_type = st.selectbox("Filter by Service Type", service_types)
+                                
+                                if selected_type != 'All Types':
+                                    display_data = display_data[display_data['ServiceType'] == selected_type]
+                                
+                                # Format for display
+                                display_cols = {
+                                    'ServiceDate': 'Date',
+                                    'Make': 'Make',
+                                    'Model': 'Model',
+                                    'ServiceType': 'Service',
+                                    'Mileage': 'Mileage',
+                                    'Cost': 'Cost ($)',
+                                    'ServiceDetails': 'Details'
+                                }
+                                
+                                # Create a copy of the data and ensure ServiceDate is datetime
+                                formatted_data = display_data[display_cols.keys()].copy()
+                                formatted_data['ServiceDate'] = pd.to_datetime(formatted_data['ServiceDate'])
+                                
+                                # Sort the data while it's still in datetime format
+                                formatted_data = formatted_data.sort_values('ServiceDate', ascending=False)
+                                
+                                # Format the columns for display
+                                formatted_data['ServiceDate'] = formatted_data['ServiceDate'].dt.strftime('%Y-%m-%d')
+                                formatted_data['Cost'] = formatted_data['Cost'].round(2)
+                                
+                                # Rename columns last
+                                formatted_data.columns = display_cols.values()
+                                
+                                st.dataframe(
+                                    formatted_data,
+                                    use_container_width=True,
+                                    hide_index=True
+                                )
+                                
+                                # Summary statistics
+                                valid_costs = display_data['Cost'].dropna()
+                                if not valid_costs.empty:
+                                    total_cost = valid_costs.sum()
+                                    avg_cost = valid_costs.mean()
+                                    service_count = len(valid_costs)
+                                    
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        st.metric("Total Services", f"{service_count:,}")
+                                    with col2:
+                                        st.metric("Total Cost", f"${total_cost:,.2f}")
+                                    with col3:
+                                        st.metric("Average Cost", f"${avg_cost:,.2f}")
+                                else:
+                                    st.warning("No valid cost data available for statistics.")
+                            else:
+                                st.info("No service records found for the selected criteria.")
+                        except Exception as e:
+                            st.error(f"Error in Service History tab: {str(e)}")
+                    
+                    with tab2:
+                        st.header("Cost Analysis")
+                        
+                        try:
+                            # Time period selection
+                            time_period = st.selectbox(
+                                "Select Time Period",
+                                ["Last 3 Months", "Last 6 Months", "Last Year", "All Time"]
+                            )
+                            
+                            # Filter by time period
+                            if time_period == "Last 3 Months":
+                                cutoff = datetime.now() - timedelta(days=90)
+                            elif time_period == "Last 6 Months":
+                                cutoff = datetime.now() - timedelta(days=180)
+                            elif time_period == "Last Year":
+                                cutoff = datetime.now() - timedelta(days=365)
+                            else:
+                                cutoff = merged_data['ServiceDate'].min()
+                            
+                            analysis_data = merged_data[merged_data['ServiceDate'] >= cutoff]
+                            
+                            if not analysis_data.empty:
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    # Costs by service type
+                                    service_costs = analysis_data.groupby('ServiceType')['Cost'].sum().reset_index()
+                                    if not service_costs.empty:
+                                        fig1 = px.pie(
+                                            service_costs,
+                                            values='Cost',
+                                            names='ServiceType',
+                                            title='Cost Distribution by Service Type'
+                                        )
+                                        st.plotly_chart(fig1, use_container_width=True)
+                                    else:
+                                        st.info("No service type cost data available.")
+                                
+                                with col2:
+                                    # Costs by vehicle
+                                    vehicle_costs = analysis_data.groupby(['Make', 'Model'])['Cost'].sum().reset_index()
+                                    if not vehicle_costs.empty:
+                                        vehicle_costs['Vehicle'] = vehicle_costs['Make'] + ' ' + vehicle_costs['Model']
+                                        fig2 = px.bar(
+                                            vehicle_costs,
+                                            x='Vehicle',
+                                            y='Cost',
+                                            title='Total Costs by Vehicle'
+                                        )
+                                        st.plotly_chart(fig2, use_container_width=True)
+                                    else:
+                                        st.info("No vehicle cost data available.")
+                                
+                                # Monthly trend
+                                if len(analysis_data) > 1:  # Need at least 2 points for a line chart
+                                    monthly_costs = analysis_data.set_index('ServiceDate').resample('M')['Cost'].sum().reset_index()
+                                    monthly_costs['Month'] = monthly_costs['ServiceDate'].dt.strftime('%Y-%m')
+                                    fig3 = px.line(
+                                        monthly_costs,
+                                        x='Month',
+                                        y='Cost',
+                                        title='Monthly Maintenance Costs'
+                                    )
+                                    st.plotly_chart(fig3, use_container_width=True)
+                                else:
+                                    st.info("Not enough data points for monthly trend analysis.")
+                                
+                                # Cost per mile analysis
+                                if not st.session_state.fuel_logs.empty:
+                                    try:
+                                        # Calculate total distance driven for each vehicle
+                                        mileage_data = st.session_state.fuel_logs.groupby('VehicleID').agg({
+                                            'Odometer': ['min', 'max']
+                                        }).reset_index()
+                                        mileage_data.columns = ['VehicleID', 'MinOdometer', 'MaxOdometer']
+                                        mileage_data['MilesDriven'] = mileage_data['MaxOdometer'] - mileage_data['MinOdometer']
+                                        
+                                        # Calculate total maintenance cost for each vehicle
+                                        cost_data = analysis_data.groupby('VehicleID')['Cost'].sum().reset_index()
+                                        
+                                        # Merge with vehicle info
+                                        cost_per_mile = pd.merge(
+                                            mileage_data,
+                                            cost_data,
+                                            on='VehicleID',
+                                            how='left'
+                                        ).merge(
+                                            st.session_state.vehicles[['VehicleID', 'Make', 'Model', 'Year', 'VehicleType']],
+                                            on='VehicleID'
+                                        )
+                                        
+                                        # Handle missing or zero values
+                                        cost_per_mile['Cost'] = cost_per_mile['Cost'].fillna(0)
+                                        cost_per_mile['MilesDriven'] = cost_per_mile['MilesDriven'].fillna(0)
+                                        
+                                        # Calculate cost per mile only for vehicles with non-zero miles driven
+                                        valid_vehicles = cost_per_mile[cost_per_mile['MilesDriven'] > 0].copy()
+                                        
+                                        if not valid_vehicles.empty:
+                                            valid_vehicles['CostPerMile'] = (valid_vehicles['Cost'] / 
+                                                                           valid_vehicles['MilesDriven']).round(3)
+                                            
+                                            st.markdown("### Cost per Mile Analysis")
+                                            fig4 = px.bar(
+                                                valid_vehicles.sort_values('CostPerMile', ascending=False),
+                                                x='Model',
+                                                y='CostPerMile',
+                                                color='Make',
+                                                title='Maintenance Cost per Mile by Vehicle',
+                                                labels={'CostPerMile': 'Cost per Mile ($)'}
+                                            )
+                                            st.plotly_chart(fig4, use_container_width=True)
+                                            
+                                            # Display summary statistics
+                                            st.markdown("#### Summary Statistics")
+                                            stats = valid_vehicles.groupby('VehicleType').agg({
+                                                'CostPerMile': ['mean', 'min', 'max', 'count']
+                                            }).round(3)
+                                            stats.columns = ['Average', 'Minimum', 'Maximum', 'Vehicle Count']
+                                            st.dataframe(stats)
+                                        else:
+                                            st.warning("No vehicles have sufficient mileage data for cost per mile analysis.")
+                                    except Exception as e:
+                                        st.error(f"Error in cost per mile analysis: {str(e)}")
+                            else:
+                                st.info("No data available for the selected time period.")
+                        except Exception as e:
+                            st.error(f"Error in Cost Analysis tab: {str(e)}")
+                else:
+                    st.warning("No valid maintenance records found after data cleaning.")
+            except Exception as e:
+                st.error(f"Error processing maintenance data: {str(e)}")
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        st.info("Please try refreshing the page. If the problem persists, check your data for any inconsistencies.")
+
+# Vehicle Health Page
+elif page == "Vehicle Health":
+    st.title("❤️ Vehicle Health Monitoring")
+    
+    if not st.session_state.vehicles.empty:
+        # Calculate health scores for all vehicles
+        health_scores = []
+        for vehicle_id in st.session_state.vehicles['VehicleID']:
+            score = calculate_vehicle_health(vehicle_id)
+            health_scores.append(score)
+        
+        st.session_state.vehicles['HealthScore'] = health_scores
+        
+        # Display health dashboard
+        st.markdown("### Vehicle Health Dashboard")
+        
+        # Sort by health score
+        health_dashboard = st.session_state.vehicles.sort_values('HealthScore', ascending=True)
+        
+        # Color coding for health status
+        def health_color(score):
+            if score >= 80:
+                return "🟢 Excellent"
+            elif score >= 60:
+                return "🟡 Good"
+            elif score >= 40:
+                return "🟠 Fair"
+            else:
+                return "🔴 Poor"
+        
+        health_dashboard['HealthStatus'] = health_dashboard['HealthScore'].apply(health_color)
+        
+        # Display health metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            avg_health = health_dashboard['HealthScore'].mean()
+            st.markdown(f"""
+                <div class='metric-card'>
+                    <h3>Average Fleet Health</h3>
+                    <h2>{avg_health:.1f}/100</h2>
+                </div>
+            """, unsafe_allow_html=True)
+        with col2:
+            best_vehicle = health_dashboard.iloc[-1]
+            st.markdown(f"""
+                <div class='metric-card'>
+                    <h3>Healthiest Vehicle</h3>
+                    <h2>{best_vehicle['Make']} {best_vehicle['Model']}</h2>
+                    <p>Score: {best_vehicle['HealthScore']:.1f}/100</p>
+                </div>
+            """, unsafe_allow_html=True)
+        with col3:
+            worst_vehicle = health_dashboard.iloc[0]
+            st.markdown(f"""
+                <div class='metric-card'>
+                    <h3>Vehicle Needing Attention</h3>
+                    <h2>{worst_vehicle['Make']} {worst_vehicle['Model']}</h2>
+                    <p>Score: {worst_vehicle['HealthScore']:.1f}/100</p>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        # Health status distribution
+        st.markdown("### Health Status Distribution")
+        fig = px.pie(
+            health_dashboard,
+            names='HealthStatus',
+            title='Fleet Health Status'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Detailed health view
+        st.markdown("### Detailed Vehicle Health")
+        st.dataframe(health_dashboard[['Make', 'Model', 'Year', 'VehicleType', 'HealthScore', 'HealthStatus']], hide_index=True)
+        
+        # Maintenance recommendations
+        st.markdown("### Maintenance Recommendations")
+        for _, vehicle in health_dashboard.iterrows():
+            if vehicle['HealthScore'] < 60:
+                st.markdown(f"""
+                    <div class='metric-card' style="border-left: 5px solid {'#FFA500' if vehicle['HealthScore'] >= 40 else '#FF0000'};">
+                        <h3>{vehicle['Make']} {vehicle['Model']} ({vehicle['Year']})</h3>
+                        <p><strong>Health Status:</strong> {vehicle['HealthStatus']}</p>
+                        <p><strong>Recommendations:</strong></p>
+                        <ul>
+                            <li>Schedule a comprehensive inspection</li>
+                            <li>Review maintenance history for overdue services</li>
+                            <li>Consider replacing high-wear components</li>
+                        </ul>
+                    </div>
+                """, unsafe_allow_html=True)
+    else:
+        st.warning("Please add vehicles to view health monitoring data.")
